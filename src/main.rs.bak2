@@ -1,0 +1,435 @@
+//! A guided tour of Iced 0.13 features:
+//!   * Elm-style state / message / update / view
+//!   * Layout (column, row, container, scrollable) and common widgets
+//!   * Live theme switching
+//!   * Async work with `Task::perform`
+//!   * Subscriptions (timer + keyboard)
+//!   * Canvas drawing
+
+use std::time::{Duration, Instant};
+
+use iced::keyboard::{self, Key};
+use iced::mouse;
+use iced::widget::canvas::{self, Canvas, Geometry, Path};
+use iced::widget::{
+    button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, radio, row,
+    scrollable, slider, text, text_input, toggler,
+};
+use iced::{
+    time, Alignment, Element, Length, Point, Rectangle, Renderer, Size, Subscription, Task, Theme,
+};
+
+fn main() -> iced::Result {
+    iced::application("Iced Feature Tour", App::update, App::view)
+        .theme(App::theme)
+        .subscription(App::subscription)
+        .window_size(Size::new(760.0, 680.0))
+        .centered()
+        .run()
+}
+
+// ---------------------------------------------------------------- state ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Widgets,
+    Async,
+    Animation,
+}
+
+impl Tab {
+    const ALL: [Tab; 3] = [Tab::Widgets, Tab::Async, Tab::Animation];
+
+    fn label(self) -> &'static str {
+        match self {
+            Tab::Widgets => "Widgets",
+            Tab::Async => "Async",
+            Tab::Animation => "Animation",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Size_ {
+    Small,
+    Medium,
+    Large,
+}
+
+impl Size_ {
+    const ALL: [Size_; 3] = [Size_::Small, Size_::Medium, Size_::Large];
+
+    fn label(self) -> &'static str {
+        match self {
+            Size_::Small => "Small",
+            Size_::Medium => "Medium",
+            Size_::Large => "Large",
+        }
+    }
+
+    fn text_size(self) -> f32 {
+        match self {
+            Size_::Small => 14.0,
+            Size_::Medium => 22.0,
+            Size_::Large => 34.0,
+        }
+    }
+}
+
+enum LoadState {
+    Idle,
+    Loading { started: Instant },
+    Done(Result<String, String>),
+}
+
+const LOAD_TIME: Duration = Duration::from_secs(2);
+
+struct App {
+    tab: Tab,
+    theme: Theme,
+
+    // Widgets tab
+    name: String,
+    agree: bool,
+    notifications: bool,
+    volume: f32,
+    size: Size_,
+
+    // Async tab
+    load: LoadState,
+
+    // Animation tab
+    running: bool,
+    angle: f32,
+    speed: f32,
+    last_tick: Instant,
+    now: Instant,
+    last_key: String,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        let now = Instant::now();
+        App {
+            tab: Tab::Widgets,
+            theme: Theme::TokyoNight,
+            name: String::new(),
+            agree: false,
+            notifications: true,
+            volume: 40.0,
+            size: Size_::Medium,
+            load: LoadState::Idle,
+            running: true,
+            angle: 0.0,
+            speed: 1.5,
+            last_tick: now,
+            now,
+            last_key: String::from("(none yet)"),
+        }
+    }
+}
+
+// ------------------------------------------------------------- messages ---
+
+#[derive(Debug, Clone)]
+enum Message {
+    TabSelected(Tab),
+    ThemeChanged(Theme),
+
+    NameChanged(String),
+    AgreeToggled(bool),
+    NotificationsToggled(bool),
+    VolumeChanged(f32),
+    SizeSelected(Size_),
+
+    StartLoading,
+    Loaded(Result<String, String>),
+
+    ToggleAnimation,
+    SpeedChanged(f32),
+
+    Tick(Instant),
+    KeyPressed(Key, keyboard::Modifiers),
+}
+
+// --------------------------------------------------------------- update ---
+
+impl App {
+    fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::TabSelected(tab) => self.tab = tab,
+            Message::ThemeChanged(theme) => self.theme = theme,
+
+            Message::NameChanged(name) => self.name = name,
+            Message::AgreeToggled(v) => self.agree = v,
+            Message::NotificationsToggled(v) => self.notifications = v,
+            Message::VolumeChanged(v) => self.volume = v,
+            Message::SizeSelected(s) => self.size = s,
+
+            Message::StartLoading => {
+                self.now = Instant::now();
+                self.load = LoadState::Loading { started: self.now };
+                // Run a future in the background; its output becomes a Message.
+                return Task::perform(fetch_greeting(self.name.clone()), Message::Loaded);
+            }
+            Message::Loaded(result) => self.load = LoadState::Done(result),
+
+            Message::ToggleAnimation => {
+                self.running = !self.running;
+                self.last_tick = Instant::now();
+            }
+            Message::SpeedChanged(v) => self.speed = v,
+
+            Message::Tick(now) => {
+                // Clamp so a long pause between subscriptions can't cause a jump.
+                let dt = now
+                    .saturating_duration_since(self.last_tick)
+                    .min(Duration::from_millis(100));
+                self.last_tick = now;
+                self.now = now;
+                if self.running {
+                    self.angle += self.speed * dt.as_secs_f32();
+                }
+            }
+            Message::KeyPressed(key, modifiers) => {
+                if key == Key::Named(keyboard::key::Named::Space) && self.tab == Tab::Animation {
+                    return self.update(Message::ToggleAnimation);
+                }
+                self.last_key = if modifiers.is_empty() {
+                    format!("{key:?}")
+                } else {
+                    format!("{modifiers:?} + {key:?}")
+                };
+            }
+        }
+        Task::none()
+    }
+
+    // --------------------------------------------------- subscriptions ---
+
+    fn subscription(&self) -> Subscription<Message> {
+        // Only run the 60fps timer when something needs it.
+        let animating = (self.tab == Tab::Animation && self.running)
+            || matches!(self.load, LoadState::Loading { .. });
+
+        let tick = if animating {
+            time::every(Duration::from_millis(16)).map(Message::Tick)
+        } else {
+            Subscription::none()
+        };
+
+        let keys = keyboard::on_key_press(|key, modifiers| Some(Message::KeyPressed(key, modifiers)));
+
+        Subscription::batch([tick, keys])
+    }
+
+    fn theme(&self) -> Theme {
+        self.theme.clone()
+    }
+
+    // ----------------------------------------------------------- view ---
+
+    fn view(&self) -> Element<'_, Message> {
+        let tabs = row(Tab::ALL.iter().map(|&tab| {
+            button(text(tab.label()))
+                .style(if tab == self.tab {
+                    button::primary
+                } else {
+                    button::secondary
+                })
+                .on_press(Message::TabSelected(tab))
+                .into()
+        }))
+        .spacing(8);
+
+        let header = row![
+            tabs,
+            iced::widget::horizontal_space(),
+            text("Theme:"),
+            pick_list(Theme::ALL, Some(&self.theme), Message::ThemeChanged),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+
+        let body = match self.tab {
+            Tab::Widgets => self.widgets_tab(),
+            Tab::Async => self.async_tab(),
+            Tab::Animation => self.animation_tab(),
+        };
+
+        container(
+            column![header, horizontal_rule(1), scrollable(body).height(Length::Fill)].spacing(14),
+        )
+        .padding(20)
+        .into()
+    }
+
+    fn widgets_tab(&self) -> Element<'_, Message> {
+        let greeting = if self.name.trim().is_empty() {
+            "Type your name above".to_string()
+        } else {
+            format!("Hello, {}!", self.name.trim())
+        };
+
+        let sizes = row(Size_::ALL.iter().map(|&s| {
+            radio(s.label(), s, Some(self.size), Message::SizeSelected).into()
+        }))
+        .spacing(16);
+
+        column![
+            text("Form widgets").size(28),
+            text_input("Your name", &self.name)
+                .on_input(Message::NameChanged)
+                .padding(10),
+            // on_press_maybe(None) renders the button disabled.
+            button("Clear").on_press_maybe(if self.name.is_empty() {
+                None
+            } else {
+                Some(Message::NameChanged(String::new()))
+            }),
+            row![
+                checkbox("I agree to nothing in particular", self.agree)
+                    .on_toggle(Message::AgreeToggled),
+                toggler(self.notifications)
+                    .label("Notifications")
+                    .on_toggle(Message::NotificationsToggled),
+            ]
+            .spacing(24),
+            text(if self.agree {
+                "Thanks for agreeing."
+            } else {
+                "You have not agreed yet."
+            })
+            .style(if self.agree { text::success } else { text::danger }),
+            row![
+                text(format!("Volume: {:>3.0}", self.volume)),
+                slider(0.0..=100.0, self.volume, Message::VolumeChanged),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            progress_bar(0.0..=100.0, self.volume),
+            text("Text size:"),
+            sizes,
+            text(greeting).size(self.size.text_size()),
+        ]
+        .spacing(14)
+        .into()
+    }
+
+    fn async_tab(&self) -> Element<'_, Message> {
+        let loading = matches!(self.load, LoadState::Loading { .. });
+
+        let status: Element<'_, Message> = match &self.load {
+            LoadState::Idle => text("Nothing requested yet.").into(),
+            LoadState::Loading { started } => {
+                let elapsed = self.now.saturating_duration_since(*started);
+                let pct = (elapsed.as_secs_f32() / LOAD_TIME.as_secs_f32()).min(1.0);
+                column![
+                    text("Working in the background (the UI stays responsive)..."),
+                    progress_bar(0.0..=1.0, pct),
+                ]
+                .spacing(8)
+                .into()
+            }
+            LoadState::Done(Ok(msg)) => text(msg.clone()).style(text::success).into(),
+            LoadState::Done(Err(err)) => text(err.clone()).style(text::danger).into(),
+        };
+
+        column![
+            text("Async tasks").size(28),
+            text(
+                "Task::perform runs a future off the UI thread and turns its \
+                 result into a Message. The greeting uses the name from the Widgets tab."
+            ),
+            button(if loading { "Loading..." } else { "Fetch greeting" })
+                .on_press_maybe((!loading).then_some(Message::StartLoading)),
+            status,
+        ]
+        .spacing(14)
+        .into()
+    }
+
+    fn animation_tab(&self) -> Element<'_, Message> {
+        column![
+            text("Canvas + subscriptions").size(28),
+            Canvas::new(Orbit { angle: self.angle })
+                .width(Length::Fill)
+                .height(Length::Fixed(300.0)),
+            row![
+                button(if self.running { "Pause" } else { "Resume" })
+                    .on_press(Message::ToggleAnimation),
+                text(format!("Speed: {:.1}", self.speed)),
+                slider(0.0..=6.0, self.speed, Message::SpeedChanged).step(0.1_f32),
+                //slider(0.0..=6.0, self.speed, Message::SpeedChanged).step(0.1),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            text("Tip: press Space to pause/resume. Any key press is captured by a subscription."),
+            text(format!("Last key: {}", self.last_key)),
+        ]
+        .spacing(14)
+        .into()
+    }
+}
+
+// ---------------------------------------------------------------- async ---
+
+async fn fetch_greeting(name: String) -> Result<String, String> {
+    tokio::time::sleep(LOAD_TIME).await;
+    if name.trim().is_empty() {
+        Err("Enter a name on the Widgets tab first!".to_string())
+    } else {
+        Ok(format!("Hello, {}! (delivered asynchronously)", name.trim()))
+    }
+}
+
+// --------------------------------------------------------------- canvas ---
+
+struct Orbit {
+    angle: f32,
+}
+
+impl canvas::Program<Message> for Orbit {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let palette = theme.extended_palette();
+
+        let center = frame.center();
+        let radius = bounds.width.min(bounds.height) / 2.0 - 40.0;
+
+        // Orbit path
+        frame.stroke(
+            &Path::circle(center, radius),
+            canvas::Stroke::default()
+                .with_color(palette.background.strong.color)
+                .with_width(2.0),
+        );
+        // Sun
+        frame.fill(&Path::circle(center, 18.0), palette.primary.strong.color);
+
+        // Planet
+        let planet = Point::new(
+            center.x + radius * self.angle.cos(),
+            center.y + radius * self.angle.sin(),
+        );
+        frame.fill(&Path::circle(planet, 14.0), palette.success.strong.color);
+
+        // Moon
+        let moon = Point::new(
+            planet.x + 30.0 * (self.angle * 4.0).cos(),
+            planet.y + 30.0 * (self.angle * 4.0).sin(),
+        );
+        frame.fill(&Path::circle(moon, 6.0), palette.danger.strong.color);
+
+        vec![frame.into_geometry()]
+    }
+}

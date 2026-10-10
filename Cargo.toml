@@ -1,0 +1,23 @@
+[package]
+name = "rust_iced_helloworld"
+version = "0.1.1"
+edition = "2026"
+
+[dependencies]
+# "tokio" enables the async runtime and time::every subscriptions.
+# "canvas" enables 2D drawing.
+iced = { version = "0.13", features = ["tokio", "canvas", "wgpu"], default-features = false }
+tokio = { version = "1", features = ["time"] }
+
+[profile.release]
+opt-level = "z"     # optimize for size instead of speed
+lto = true          # link-time optimization across all crates
+codegen-units = 1   # slower build, smaller output
+panic = "abort"     # drops the unwinding machinery
+strip = true        # removes symbols
+
+# NIGHTLY BUILD OPTIMIZATION
+# rustup toolchain install nightly
+# rustup component add rust-src --toolchain nightly
+# cargo +nightly build --release -Zbuild-std : 2.5 MB (nightly) from 2.7 MB (stable)
+
