@@ -2,11 +2,15 @@
 name = "rust_iced_helloworld"
 version = "0.1.1"
 edition = "2021"
+description = "A tour of Iced 0.13 features, tuned for macOS (Apple Silicon)"
+license = "MIT"          
+repository = "https://github.com/JordanNash/rust_iced_helloworld"
+publish = false
 
 [dependencies]
 # Everything below is relevant to a native macOS (Apple Silicon) build.
 # Left out on purpose: tiny-skia (software renderer), webgl, fira-sans (Wasm
-# font), async-std/smol (alternate executors), multi-window (see notes).
+# font), async-std/smol (alternate executors), multi-window (experimental; needs the daemon API).
 iced = { version = "0.13", default-features = false, features = [
     "wgpu",                  # GPU renderer (Metal on macOS)
     "tokio",                 # async runtime + time::every subscriptions
