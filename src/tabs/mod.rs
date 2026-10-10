@@ -3,4 +3,7 @@
 
 pub mod animation;
 pub mod async_task;
+pub mod editing;
+pub mod media;
+pub mod sysinfo;
 pub mod widgets;

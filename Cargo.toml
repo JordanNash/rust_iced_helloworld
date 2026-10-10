@@ -4,9 +4,23 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# "tokio" enables the async runtime and time::every subscriptions.
-# "canvas" enables 2D drawing.
-iced = { version = "0.13", features = ["tokio", "canvas", "wgpu"], default-features = false }
+# Everything below is relevant to a native macOS (Apple Silicon) build.
+# Left out on purpose: tiny-skia (software renderer), webgl, fira-sans (Wasm
+# font), async-std/smol (alternate executors), multi-window (see notes).
+iced = { version = "0.13", default-features = false, features = [
+    "wgpu",                  # GPU renderer (Metal on macOS)
+    "tokio",                 # async runtime + time::every subscriptions
+    "canvas",                # 2D drawing
+    "image-without-codecs",  # Image widget for raw pixels (no PNG/JPEG decoders; use "image" if you load files)
+    "svg",                   # SVG widget
+    "qr_code",               # QR code widget
+    "markdown",              # Markdown rendering widget
+    "lazy",                  # Lazy (cached) widgets
+    "highlighter",           # Syntax highlighting for text_editor (adds syntect: grows the binary)
+    "debug",                 # F12 debug/performance overlay
+    "system",                # Query system information
+    "auto-detect-theme",     # Theme::default() follows macOS light/dark mode
+] }
 tokio = { version = "1", features = ["time"] }
 
 [profile.release]
