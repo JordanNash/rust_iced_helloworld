@@ -1,2 +1,9 @@
 # rust_iced_helloworld
-Hello World demonstration of iced features
+A Claude-authored Hello World demonstration of iced features
+
+Iced is a GUI framework for Rust. See: https://github.com/iced-rs/iced
+
+
+
+
+
