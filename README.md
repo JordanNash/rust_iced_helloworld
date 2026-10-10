@@ -5,3 +5,10 @@ I wanted to play with iced, and I needed a known-good "Hello World" project to e
 
 I asked Claude to write a Hello World demonstration of iced features. This is it.
 
+BUILD:
+Cargo's built-in commands work as expected:
+- cargo run
+- cargo build --release
+
+On MacOS: MacBook M1 Max
+
