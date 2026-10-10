@@ -20,4 +20,3 @@ strip = true        # removes symbols
 # rustup toolchain install nightly
 # rustup component add rust-src --toolchain nightly
 # cargo +nightly build --release -Zbuild-std : 2.5 MB (nightly) from 2.7 MB (stable)
-
